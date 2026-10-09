@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MP4 Player</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b1020; --panel:#151c2f; --text:#edf2ff; --muted:#9eacc8; --accent:#6ea8fe; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; padding:28px 16px; background:radial-gradient(ellipse at top,#1a2850 0,#0b1020 55%); color:var(--text); font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+  main { width:min(100%,1000px); margin:auto; }
+  h1 { margin:0 0 6px; font-size:clamp(1.6rem,4vw,2.3rem); }
+  .sub { margin:0 0 22px; color:var(--muted); }
+  .panel { background:rgba(21,28,47,.94); border:1px solid #2a3654; border-radius:18px; padding:18px; box-shadow:0 18px 50px #0004; }
+  .drop { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; text-align:center; border:2px dashed #425477; border-radius:14px; padding:25px 16px; cursor:pointer; transition:.15s; }
+  .drop:hover,.drop.drag { border-color:var(--accent); background:#6ea8fe12; }
+  .drop strong { font-size:1.05rem; }
+  .muted { color:var(--muted); font-size:.9rem; }
+  input[type=file] { max-width:100%; }
+  video { display:block; width:100%; max-height:65vh; margin-top:18px; background:#000; border-radius:12px; }
+  .fileline { display:flex; gap:12px; justify-content:space-between; align-items:center; flex-wrap:wrap; margin-top:12px; }
+  #filename { overflow-wrap:anywhere; }
+  .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:16px; }
+  button,select,input[type=range] { accent-color:var(--accent); }
+  button,select { background:#263653; border:1px solid #425477; color:var(--text); border-radius:9px; padding:9px 12px; font:inherit; cursor:pointer; }
+  button:hover { background:#32476d; }
+  input[type=range] { flex:1; min-width:130px; }
+  .time { color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .bottom { display:flex; gap:10px; align-items:center; margin-top:14px; flex-wrap:wrap; }
+  .bottom label { color:var(--muted); font-size:.9rem; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>MP4 Player</h1>
+  <p class="sub">Chọn video từ máy tính để phát trực tiếp trong trình duyệt. Video không được tải lên mạng.</p>
+  <section class="panel">
+    <label class="drop" id="dropZone" for="fileInput">
+      <strong>📁 Chọn file video</strong>
+      <span>Kéo thả file vào đây hoặc nhấn để duyệt máy tính</span>
+      <span class="muted">Hỗ trợ MP4 và các định dạng video mà trình duyệt có thể phát</span>
+      <input id="fileInput" type="file" accept="video/*,.mp4">
+    </label>
+    <video id="video" class="hidden" controls playsinline preload="metadata"></video>
+    <div id="fileInfo" class="fileline hidden">
+      <span id="filename"></span>
+      <button id="clearBtn" type="button">Đóng video</button>
+    </div>
+    <div class="controls">
+      <button id="playBtn" type="button" disabled>▶ Phát</button>
+      <button id="backBtn" type="button" disabled>↶ 10 giây</button>
+      <button id="forwardBtn" type="button" disabled>10 giây ↷</button>
+      <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Vị trí phát" disabled>
+      <span class="time" id="time">00:00 / 00:00</span>
+    </div>
+    <div class="bottom">
+      <label for="speed">Tốc độ phát</label>
+      <select id="speed">
+        <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+        <option value="0.75">0.75×</option><option value="1" selected>1×</option>
+        <option value="1.25">1.25×</option><option value="1.5">1.5×</option>
+        <option value="1.75">1.75×</option><option value="2">2×</option>
+      </select>
+      <label for="volume">Âm lượng</label>
+      <input id="volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Âm lượng">
+      <button id="fullscreenBtn" type="button" disabled>⛶ Toàn màn hình</button>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  const fileInput = document.getElementById('fileInput');
+  const video = document.getElementById('video');
+  const dropZone = document.getElementById('dropZone');
+  const fileInfo = document.getElementById('fileInfo');
+  const filename = document.getElementById('filename');
+  const playBtn = document.getElementById('playBtn');
+  const backBtn = document.getElementById('backBtn');
+  const forwardBtn = document.getElementById('forwardBtn');
+  const seek = document.getElementById('seek');
+  const time = document.getElementById('time');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  let objectUrl = null;
+  let seeking = false;
+
+  function formatTime(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+    const s = Math.floor(seconds);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return h ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+             : `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  }
+  function updateTime() {
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    time.textContent = `${formatTime(video.currentTime)} / ${formatTime(duration)}`;
+    if (!seeking && duration > 0) seek.value = String(Math.round(video.currentTime / duration * 1000));
+  }
+  function setEnabled(enabled) {
+    [playBtn, backBtn, forwardBtn, seek, fullscreenBtn].forEach(el => el.disabled = !enabled);
+  }
+  function loadFile(file) {
+    if (!file) return;
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = URL.createObjectURL(file);
+    video.src = objectUrl;
+    video.classList.remove('hidden');
+    fileInfo.classList.remove('hidden');
+    filename.textContent = `${file.name} · ${(file.size / (1024*1024)).toFixed(1)} MB`;
+    setEnabled(true);
+    playBtn.textContent = '▶ Phát';
+    video.load();
+  }
+  function clearVideo() {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = null;
+    video.classList.add('hidden');
+    fileInfo.classList.add('hidden');
+    fileInput.value = '';
+    setEnabled(false);
+    seek.value = '0';
+    time.textContent = '00:00 / 00:00';
+  }
+  fileInput.addEventListener('change', e => loadFile(e.target.files[0]));
+  playBtn.addEventListener('click', async () => {
+    if (video.paused) {
+      try { await video.play(); } catch (err) { alert('Không thể phát video này. Hãy thử file MP4 dùng codec H.264/AAC.'); }
+    } else video.pause();
+  });
+  video.addEventListener('play', () => playBtn.textContent = '⏸ Tạm dừng');
+  video.addEventListener('pause', () => playBtn.textContent = '▶ Phát');
+  video.addEventListener('ended', () => playBtn.textContent = '▶ Phát lại');
+  backBtn.addEventListener('click', () => video.currentTime = Math.max(0, video.currentTime - 10));
+  forwardBtn.addEventListener('click', () => video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10));
+  video.addEventListener('timeupdate', updateTime);
+  video.addEventListener('loadedmetadata', updateTime);
+  seek.addEventListener('input', () => {
+    seeking = true;
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    time.textContent = `${formatTime(Number(seek.value) / 1000 * duration)} / ${formatTime(duration)}`;
+  });
+  seek.addEventListener('change', () => {
+    if (Number.isFinite(video.duration)) video.currentTime = Number(seek.value) / 1000 * video.duration;
+    seeking = false;
+    updateTime();
+  });
+  document.getElementById('speed').addEventListener('change', e => video.playbackRate = Number(e.target.value));
+  document.getElementById('volume').addEventListener('input', e => video.volume = Number(e.target.value));
+  fullscreenBtn.addEventListener('click', async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (video.requestFullscreen) await video.requestFullscreen();
+      else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+    } catch (_) {}
+  });
+  document.getElementById('clearBtn').addEventListener('click', clearVideo);
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag');
+    loadFile(e.dataTransfer.files[0]);
+  });
+})();
+</script>
+</body>
+</html>
